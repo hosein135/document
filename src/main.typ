@@ -39,13 +39,13 @@
 #show outline.entry.where(level: 1): it => {
   block(above: 0.55em, below: 0.15em, it)
 }
-#show raw: set text(dir: ltr, font: "DejaVu Sans Mono", size: 10pt)
+#show raw: set text(dir: ltr, font: ("Parastoo", "Libertinus Serif"))
 
 #let pic(path, width: 100%) = figure(
   image(path, width: width),
   caption: [],
 )
-#let ui(body) = text(dir: ltr, font: "DejaVu Sans Mono", size: 11pt, body)
+#let ui(body) = text(dir: ltr, font: ("Parastoo", "Libertinus Serif"), body)
 
 #align(center)[
   #text(size: 22pt, weight: "bold")[مدار منطقی]
