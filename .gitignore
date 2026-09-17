@@ -1,0 +1,12 @@
+output/
+.document-nix-ready
+.document-bootstrap/
+.vfox/
+vendor/
+_extract/
+_outline.txt
+_names.json
+__pycache__/
+*.pyc
+result
+result-*
