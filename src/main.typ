@@ -6,9 +6,17 @@
 
 #set page(
   paper: "us-letter",
-  margin: 2.54cm,
+  margin: (x: 2.4cm, y: 2.5cm),
   numbering: "۱",
   number-align: center,
+  background: pad(
+    10pt,
+    rect(
+      width: 100%,
+      height: 100%,
+      stroke: 0.85pt + rgb("#334155"),
+    ),
+  ),
 )
 
 #set text(
@@ -35,15 +43,25 @@
   it.supplement
   [ ]
   context it.counter.display(it.numbering)
+  if it.body != [] {
+    [: ]
+    it.body
+  }
 }
 #show outline.entry.where(level: 1): it => {
   block(above: 0.55em, below: 0.15em, it)
 }
 #show raw: set text(dir: ltr, font: ("Parastoo", "Libertinus Serif"))
 
-#let pic(path, width: 100%) = figure(
-  image(path, width: width),
-  caption: [],
+#let pic(path, title, width: 100%) = figure(
+  block(
+    stroke: 0.7pt + rgb("#334155"),
+    inset: 5pt,
+    image(path, width: width),
+  ),
+  caption: title,
+  kind: image,
+  supplement: [شکل],
 )
 #let ui(body) = text(dir: ltr, font: ("Parastoo", "Libertinus Serif"), body)
 
@@ -65,6 +83,15 @@
 
 #pagebreak()
 
+#heading(outlined: false, numbering: none)[فهرست تصاویر]
+#v(0.4em)
+#outline(
+  title: none,
+  target: figure.where(kind: image),
+)
+
+#pagebreak()
+
 = مقدمه
 
 این راهنما مراحل راه‌اندازی بورد FPGA، رسم شماتیک و کدنویسی وریلاگ در نرم‌افزار ISE، اختصاص پایه‌ها، شبیه‌سازی، اعمال کلاک و ساخت ماژول را به ترتیب توضیح می‌دهد. پیش از شروع کار، کابل‌ها و منبع تغذیه را مطابق همین متن وصل کنید و اگر مرحله‌ای با آنچه در شکل‌ها می‌بینید فرق داشت، کار را متوقف کنید و به مسئول آزمایشگاه اطلاع دهید.
@@ -73,9 +100,9 @@
 
 + کابل JTAG بورد FPGA را به رایانه وصل کنید. @fig-01 خود کابل را نشان می‌دهد و @fig-02 محل اتصال آن به رایانه را مشخص می‌کند.
 
-#pic("assets/image1.jpeg", width: 81%) <fig-01>
+#pic("assets/image1.jpeg", [کابل JTAG], width: 81%) <fig-01>
 
-#pic("assets/image2.jpeg", width: 25%) <fig-02>
+#pic("assets/image2.jpeg", [محل اتصال JTAG به رایانه], width: 25%) <fig-02>
 
 + رایانه را روشن کنید. اگر روشن نشد، این موارد را بررسی کنید:
 
@@ -88,23 +115,23 @@
 
 + منبع تغذیه را تنظیم کنید. ابتدا دکمه‌ها را مطابق @fig-03 در وضعیت نشان‌داده‌شده قرار دهید.
 
-#pic("assets/image3.jpeg", width: 100%) <fig-03>
+#pic("assets/image3.jpeg", [تنظیم دکمه‌های منبع تغذیه], width: 100%) <fig-03>
 
 ولتاژ را بین ۶ ولت و ۶٫۴ ولت تنظیم کنید؛ سپس کابل برق بورد FPGA را مطابق @fig-04 و @fig-05 به منبع تغذیه وصل کنید.
 
-#pic("assets/image4.jpeg", width: 86%) <fig-04>
+#pic("assets/image4.jpeg", [تنظیم ولتاژ منبع تغذیه], width: 86%) <fig-04>
 
-#pic("assets/image5.jpeg", width: 82%) <fig-05>
+#pic("assets/image5.jpeg", [اتصال کابل برق بورد به منبع تغذیه], width: 82%) <fig-05>
 
 + سر دیگر کابل برق را به کانکتور تغذیه بورد FPGA وصل کنید. اگر برنامه پیش‌فرض روی بورد اجرا نشد، ممکن است کلید تغذیه قطع باشد؛ آن را مطابق @fig-06 وصل کنید.
 
-#pic("assets/image6.png", width: 42%) <fig-06>
+#pic("assets/image6.png", [کلید تغذیه بورد FPGA], width: 42%) <fig-06>
 
 + مراقب باشید جریان از ۰٫۳ آمپر بیشتر نشود.
 
 + جامپرها را در وضعیت @fig-07 قرار دهید.
 
-#pic("assets/image7.jpeg", width: 84%) <fig-07>
+#pic("assets/image7.jpeg", [وضعیت جامپرها], width: 84%) <fig-07>
 
 = کار با نرم‌افزار ISE و رسم شماتیک
 
@@ -112,105 +139,105 @@
 
 روی آیکون نرم‌افزار مطابق @fig-08 دوبار کلیک کنید تا باز شود.
 
-#pic("assets/image8.png", width: 99%) <fig-08>
+#pic("assets/image8.png", [آیکون نرم‌افزار ISE], width: 99%) <fig-08>
 
 محیط نرم‌افزار باید مطابق @fig-09 دیده شود.
 
-#pic("assets/image9.png", width: 100%) <fig-09>
+#pic("assets/image9.png", [محیط نرم‌افزار ISE], width: 100%) <fig-09>
 
 اگر نرم‌افزار پروژه‌ای از قبل باز دارد، حتماً آن را مطابق @fig-10 ببندید.
 
-#pic("assets/image10.png", width: 54%) <fig-10>
+#pic("assets/image10.png", [بستن پروژهٔ باز], width: 54%) <fig-10>
 
 برای ساخت پروژه جدید مطابق @fig-11 عمل کنید.
 
-#pic("assets/image11.png", width: 97%) <fig-11>
+#pic("assets/image11.png", [ساخت پروژهٔ جدید], width: 97%) <fig-11>
 
 در پنجره‌ای که باز می‌شود نام پروژه را وارد کنید و گزینه شماتیک را مطابق @fig-12 انتخاب نمایید.
 
-#pic("assets/image12.png", width: 100%) <fig-12>
+#pic("assets/image12.png", [نام پروژه و انتخاب شماتیک], width: 100%) <fig-12>
 
 در مرحله بعد، گزینه‌ها باید دقیقاً مانند @fig-13 باشند.
 
-#pic("assets/image13.png", width: 100%) <fig-13>
+#pic("assets/image13.png", [گزینه‌های مرحلهٔ بعد], width: 100%) <fig-13>
 
 سپس روی #ui[Finish] کلیک کنید.
 
 پس از ساخته شدن پروژه، روی مورد مشخص‌شده راست‌کلیک کنید و گزینه نشان‌داده‌شده در @fig-14 را بزنید.
 
-#pic("assets/image14.png", width: 70%) <fig-14>
+#pic("assets/image14.png", [منوی راست‌کلیک برای فایل شماتیک], width: 70%) <fig-14>
 
 در پنجره جدید، نامی برای فایل شماتیک بگذارید و از منوی سمت چپ گزینه شماتیک را مطابق @fig-15 انتخاب کنید.
 
-#pic("assets/image15.png", width: 99%) <fig-15>
+#pic("assets/image15.png", [نام‌گذاری فایل شماتیک], width: 99%) <fig-15>
 
 در مرحله بعد روی دکمه پایان کلیک کنید.
 
 حالا می‌توانید گیت‌ها را به صفحه طراحی اضافه کنید: نام گیت را جستجو کنید و از فهرست نتایج یکی را مطابق @fig-16 برگزینید.
 
-#pic("assets/image16.png", width: 45%) <fig-16>
+#pic("assets/image16.png", [جستجو و انتخاب گیت], width: 45%) <fig-16>
 
 قطعه را مطابق @fig-17 در جای مناسب روی صفحه طراحی قرار دهید.
 
-#pic("assets/image17.png", width: 100%) <fig-17>
+#pic("assets/image17.png", [قرار دادن قطعه روی صفحهٔ طراحی], width: 100%) <fig-17>
 
 برای کشیدن سیم مطابق @fig-18 عمل کنید.
 
-#pic("assets/image18.png", width: 100%) <fig-18>
+#pic("assets/image18.png", [اضافه کردن سیم], width: 100%) <fig-18>
 
 ورودی و خروجی را مطابق @fig-19 اضافه کنید.
 
-#pic("assets/image19.png", width: 100%) <fig-19>
+#pic("assets/image19.png", [اضافه کردن ورودی و خروجی], width: 100%) <fig-19>
 
 هنگام گذاشتن ورودی و خروجی یا وصل کردن سیم به پایه‌ها، صبر کنید تا نشانگر مطابق @fig-20 ظاهر شود و بعد کلیک کنید.
 
-#pic("assets/image20.png", width: 87%) <fig-20>
+#pic("assets/image20.png", [نشانگر اتصال به پایه], width: 87%) <fig-20>
 
 برای وصل کردن دو نقطه به یکدیگر کافی است روی نقطه شروع و پایان کلیک کنید؛ نرم‌افزار مسیر را خودش رسم می‌کند و لازم نیست مسیر را دستی بکشید.
 
 برای تعیین ورودی و خروجی یا نام‌گذاری هر پایه، روی آن دوبار کلیک کنید تا پنجره‌ای مانند @fig-21 باز شود.
 
-#pic("assets/image21.png", width: 100%) <fig-21>
+#pic("assets/image21.png", [پنجرهٔ نام‌گذاری پایه], width: 100%) <fig-21>
 
 در بیشتر موارد نرم‌افزار خودش ورودی و خروجی را تشخیص می‌دهد و تغییر نام پیش‌فرض پایه‌ها الزامی نیست. اگر نام را عوض می‌کنید، از واژه‌های رزروشده مانند #ui[input] و #ui[output] استفاده نکنید.
 
 تغییرات را اعمال و تأیید کنید. پس از مشخص شدن ورودی‌ها و خروجی‌ها، برای اطمینان از درستی شماتیک روی گزینه مشخص‌شده در @fig-22 کلیک کنید.
 
-#pic("assets/image22.png", width: 80%) <fig-22>
+#pic("assets/image22.png", [بررسی صحت شماتیک], width: 80%) <fig-22>
 
 در کنسول باید پیغام @fig-23 ظاهر شود؛ در غیر این صورت در رسم شماتیک اشتباهی رخ داده است.
 
-#pic("assets/image23.png", width: 100%) <fig-23>
+#pic("assets/image23.png", [پیغام کنسول پس از بررسی], width: 100%) <fig-23>
 
 اگر کنسول یا بخش دیگری از نرم‌افزار دیده نمی‌شود، به زبانه #ui[View] مطابق @fig-24 بروید.
 
-#pic("assets/image24.png", width: 77%) <fig-24>
+#pic("assets/image24.png", [زبانهٔ View], width: 77%) <fig-24>
 
 برای گذاشتن نمادها، سیم‌ها و پایه‌های ورودی/خروجی و همچنین بررسی شماتیک می‌توانید از نوار ابزار @fig-25 هم استفاده کنید.
 
-#pic("assets/image25.png", width: 94%) <fig-25>
+#pic("assets/image25.png", [نوار ابزار شماتیک], width: 94%) <fig-25>
 
 پس از اتمام رسم شماتیک مطابق @fig-26 ادامه دهید.
 
-#pic("assets/image26.png", width: 70%) <fig-26>
+#pic("assets/image26.png", [ادامه پس از رسم شماتیک], width: 70%) <fig-26>
 
 در قسمت پایین باید مواردی مانند @fig-27 دیده شود. برای سنتز، روی گزینه مشخص‌شده در همان شکل دوبار کلیک کنید.
 
-#pic("assets/image27.png", width: 70%) <fig-27>
+#pic("assets/image27.png", [اجرای سنتز], width: 70%) <fig-27>
 
 پنجره‌ای مطابق @fig-28 باز می‌شود؛ آن را تأیید کنید.
 
-#pic("assets/image28.png", width: 91%) <fig-28>
+#pic("assets/image28.png", [تأیید پنجرهٔ سنتز], width: 91%) <fig-28>
 
 اندکی بعد برنامه دیگری باز می‌شود (@fig-29 و @fig-30). تا باز شدن آن، همان دستور را دوباره اجرا نکنید.
 
-#pic("assets/image29.png", width: 64%) <fig-29>
+#pic("assets/image29.png", [باز شدن برنامهٔ جانبی], width: 64%) <fig-29>
 
-#pic("assets/image30.png", width: 100%) <fig-30>
+#pic("assets/image30.png", [محیط برنامهٔ جانبی], width: 100%) <fig-30>
 
 اگر این برنامه باز نشد، روی گزینه مشخص‌شده در @fig-31 کلیک کنید.
 
-#pic("assets/image31.png", width: 54%) <fig-31>
+#pic("assets/image31.png", [باز کردن برنامه در صورت اجرا نشدن], width: 54%) <fig-31>
 
 پس از کلیک، پیغام دیگری می‌آید؛ آن را هم تأیید کنید و سپس دوباره سنتز را اجرا نمایید.
 
@@ -218,7 +245,7 @@
 
 در بخشی که در @fig-32 مشخص شده می‌توان ورودی‌ها و خروجی‌ها را به پایه‌های FPGA وصل کرد.
 
-#pic("assets/image32.png", width: 90%) <fig-32>
+#pic("assets/image32.png", [اختصاص پایه‌های FPGA], width: 90%) <fig-32>
 
 برای انتخاب پایه مناسب از جدول زیر استفاده کنید.
 
@@ -394,13 +421,13 @@
 
 نمای بورد و پایه‌ها در @fig-33 و @fig-34 آمده است.
 
-#pic("assets/image33.jpeg", width: 47%) <fig-33>
+#pic("assets/image33.jpeg", [نمای پایه‌های بورد], width: 47%) <fig-33>
 
-#pic("assets/image34.jpeg", width: 100%) <fig-34>
+#pic("assets/image34.jpeg", [نمای بورد FPGA], width: 100%) <fig-34>
 
 چند قطعه مهم بورد در @fig-35 مشخص شده‌اند:
 
-#pic("assets/image35.jpeg", width: 100%) <fig-35>
+#pic("assets/image35.jpeg", [قطعات روی بورد], width: 100%) <fig-35>
 
 - چهار جفت LED روی بورد هست؛ در مجموع ۸ عدد.
 - سه قطعه دیپ‌سوییچ چهارتایی وجود دارد؛ در مجموع ۱۲ کلید. هنگام تغییر وضعیت، ابتدا دیپ‌سوییچ را در جایش ثابت کنید، با یک دست نگه دارید و با دست دیگر مقدار آن را عوض کنید. از یکی از پایه‌های دیپ‌سوییچ (پایه #ui[p18]) استفاده نکنید.
@@ -408,55 +435,55 @@
 
 پس از انتخاب پایه‌های FPGA، گزینه #ui[fixed] را هم مطابق @fig-36 علامت بزنید.
 
-#pic("assets/image36.png", width: 97%) <fig-36>
+#pic("assets/image36.png", [گزینهٔ fixed], width: 97%) <fig-36>
 
 در پایان با #ui[Ctrl+S] ذخیره کنید. پس از این کار باید حتماً پیغام @fig-37 ظاهر شود؛ وگرنه تغییرات ذخیره نشده‌اند. بیشتر وقتی این پیغام نمی‌آید که ورودی یا خروجی را قبلاً به پایه‌ای اختصاص داده‌اید و حالا می‌خواهید به پایه دیگری بدهید.
 
-#pic("assets/image37.png", width: 100%) <fig-37>
+#pic("assets/image37.png", [پیغام ذخیرهٔ تغییرات], width: 100%) <fig-37>
 
 اگر پیغام ظاهر نشد، تیک یکی از گزینه‌های #ui[fixed] را یک‌بار بردارید و دوباره بگذارید؛ سپس ذخیره کنید.
 
 پس از این مراحل به محیط ISE برگردید. روی گزینه مشخص‌شده در @fig-38 راست‌کلیک کنید و #ui[Rerun All] را انتخاب نمایید.
 
-#pic("assets/image38.png", width: 100%) <fig-38>
+#pic("assets/image38.png", [اجرای Rerun All], width: 100%) <fig-38>
 
 پس از چند لحظه باید خروجی @fig-39 را ببینید.
 
-#pic("assets/image39.png", width: 67%) <fig-39>
+#pic("assets/image39.png", [خروجی سنتز با تیک سبز], width: 67%) <fig-39>
 
 اگر هر سه تیک سبز نبود، یعنی هشدار (#ui[warning]) یا خطا (#ui[error]) وجود دارد.
 
 سپس روی گزینه مشخص‌شده در @fig-40 دوبار کلیک کنید.
 
-#pic("assets/image40.png", width: 70%) <fig-40>
+#pic("assets/image40.png", [ورود به برنامه‌ریزی], width: 70%) <fig-40>
 
 پنجره جدیدی مطابق @fig-41 باز می‌شود.
 
-#pic("assets/image41.png", width: 100%) <fig-41>
+#pic("assets/image41.png", [پنجرهٔ برنامه‌ریزی], width: 100%) <fig-41>
 
 روی گزینه مشخص‌شده در @fig-42 کلیک کنید.
 
-#pic("assets/image42.png", width: 42%) <fig-42>
+#pic("assets/image42.png", [گزینهٔ بارگذاری بیت‌فایل], width: 42%) <fig-42>
 
 پیغام @fig-43 را تأیید کنید.
 
-#pic("assets/image43.png", width: 74%) <fig-43>
+#pic("assets/image43.png", [پیغام تأیید اول], width: 74%) <fig-43>
 
 پیغام @fig-44 را نیز تأیید کنید.
 
-#pic("assets/image44.png", width: 84%) <fig-44>
+#pic("assets/image44.png", [پیغام تأیید دوم], width: 84%) <fig-44>
 
 سپس پنجره‌ای مطابق @fig-45 باز می‌شود و فایل #ui[.bit] برنامه را می‌خواهد. این فایل را از مسیر ذخیره پروژه انتخاب کنید.
 
-#pic("assets/image45.jpeg", width: 100%) <fig-45>
+#pic("assets/image45.jpeg", [انتخاب فایل bit], width: 100%) <fig-45>
 
 بعد از آن پیغامی مطابق @fig-46 می‌آید؛ آن را تأیید کنید.
 
-#pic("assets/image46.jpeg", width: 100%) <fig-46>
+#pic("assets/image46.jpeg", [پیغام پس از انتخاب فایل], width: 100%) <fig-46>
 
 در پایان روی آیکون سبز مطابق @fig-47 راست‌کلیک کنید و گزینه #ui[Program] را بزنید.
 
-#pic("assets/image47.jpeg", width: 82%) <fig-47>
+#pic("assets/image47.jpeg", [گزینهٔ Program], width: 82%) <fig-47>
 
 پس از اتمام برنامه‌ریزی، خروجی مورد نظر باید روی بورد دیده شود.
 
@@ -465,75 +492,75 @@
 - رایانه را خاموش کنید.
 - کابل برق و کابل JTAG را طوری دور بورد بپیچید که به محل اتصال JTAG فشار نیاید؛ سپس بورد را مطابق @fig-48 به مسئول آزمایشگاه تحویل دهید.
 
-#pic("assets/image48.jpeg", width: 100%) <fig-48>
+#pic("assets/image48.jpeg", [جمع کردن کابل‌ها و تحویل بورد], width: 100%) <fig-48>
 
 = شبیه‌سازی
 
 اگر طراحی پیچیده است و می‌خواهید پیش از پیاده‌سازی روی بورد از درستی آن مطمئن شوید، روی مورد مشخص‌شده در @fig-49 دوبار کلیک کنید.
 
-#pic("assets/image49.png", width: 70%) <fig-49>
+#pic("assets/image49.png", [شروع شبیه‌سازی], width: 70%) <fig-49>
 
 پنجره‌ای مطابق @fig-50 باز می‌شود.
 
-#pic("assets/image50.png", width: 100%) <fig-50>
+#pic("assets/image50.png", [پنجرهٔ شبیه‌سازی], width: 100%) <fig-50>
 
 روی یکی از ورودی‌ها در محل مشخص‌شده در @fig-51 راست‌کلیک کنید و گزینه نشان‌داده‌شده را انتخاب نمایید.
 
-#pic("assets/image51.png", width: 62%) <fig-51>
+#pic("assets/image51.png", [مقداردهی ورودی در شبیه‌سازی], width: 62%) <fig-51>
 
 در پنجره @fig-52 مقدار ۰ یا ۱ را در قسمت مشخص‌شده وارد کنید و تأیید نمایید.
 
-#pic("assets/image52.png", width: 57%) <fig-52>
+#pic("assets/image52.png", [وارد کردن مقدار ۰ یا ۱], width: 57%) <fig-52>
 
 همین کار را برای همه ورودی‌های دیگر تکرار کنید. سپس روی گزینه مشخص‌شده در @fig-53 کلیک کنید.
 
-#pic("assets/image53.png", width: 83%) <fig-53>
+#pic("assets/image53.png", [اجرای شبیه‌سازی], width: 83%) <fig-53>
 
 خروجی بر اساس مقادیر ورودی، به‌صورت شکل‌موج مطابق @fig-54 نمایش داده می‌شود.
 
-#pic("assets/image54.png", width: 100%) <fig-54>
+#pic("assets/image54.png", [شکل‌موج خروجی], width: 100%) <fig-54>
 
 = کدنویسی به زبان وریلاگ
 
 اگر نرم‌افزار پروژه‌ای از قبل باز دارد، حتماً آن را مطابق @fig-55 ببندید.
 
-#pic("assets/image10.png", width: 54%) <fig-55>
+#pic("assets/image10.png", [بستن پروژه پیش از وریلاگ], width: 54%) <fig-55>
 
 برای ساخت پروژه جدید مطابق @fig-56 عمل کنید.
 
-#pic("assets/image11.png", width: 97%) <fig-56>
+#pic("assets/image11.png", [ساخت پروژهٔ وریلاگ], width: 97%) <fig-56>
 
 در پنجره جدید نام پروژه را وارد کنید و این بار #ui[HDL] را مطابق @fig-57 انتخاب نمایید.
 
-#pic("assets/image55.png", width: 100%) <fig-57>
+#pic("assets/image55.png", [انتخاب HDL], width: 100%) <fig-57>
 
 در مرحله بعد گزینه‌ها باید مانند @fig-58 باشند.
 
-#pic("assets/image13.png", width: 100%) <fig-58>
+#pic("assets/image13.png", [گزینه‌های پروژهٔ HDL], width: 100%) <fig-58>
 
 سپس روی #ui[Finish] کلیک کنید.
 
 پس از ساخته شدن پروژه، روی مورد مشخص‌شده در @fig-59 راست‌کلیک کنید.
 
-#pic("assets/image56.png", width: 46%) <fig-59>
+#pic("assets/image56.png", [راست‌کلیک پس از ساخت پروژه], width: 46%) <fig-59>
 
 از منو، گزینه نشان‌داده‌شده در @fig-60 را انتخاب کنید.
 
-#pic("assets/image57.png", width: 46%) <fig-60>
+#pic("assets/image57.png", [منوی ایجاد فایل وریلاگ], width: 46%) <fig-60>
 
 در پنجره بازشده مطابق @fig-61 عمل کنید.
 
-#pic("assets/image58.png", width: 99%) <fig-61>
+#pic("assets/image58.png", [پنجرهٔ ایجاد ماژول], width: 99%) <fig-61>
 
 در این مرحله می‌توانید نام ورودی‌ها و خروجی‌ها را وارد کنید. این نام‌ها فقط در کدنویسی به‌کار می‌روند و ربطی به پایه‌های فیزیکی FPGA ندارند.
 
 تعیین این نام‌ها الزامی نیست؛ می‌توانید فیلدها را خالی بگذارید و بعداً در خودِ کد مشخص کنید (@fig-62).
 
-#pic("assets/image59.png", width: 98%) <fig-62>
+#pic("assets/image59.png", [نام ورودی و خروجی در کد], width: 98%) <fig-62>
 
 در پنجره بعد روی گزینه اتمام کلیک کنید تا محیط @fig-63 ظاهر شود.
 
-#pic("assets/image60.png", width: 100%) <fig-63>
+#pic("assets/image60.png", [ویرایشگر کد وریلاگ], width: 100%) <fig-63>
 
 یک ویرایشگر کد باز شده است و می‌توانید برنامه وریلاگ را در همین قسمت بنویسید.
 
@@ -543,19 +570,19 @@
 
 ابتدا مولد تابع (Function Generator) را روشن کنید و بسامد را روی ۳ هرتز بگذارید تا تغییر LEDها با چشم دیده شود (@fig-64).
 
-#pic("assets/image61.jpeg", width: 50%) <fig-64>
+#pic("assets/image61.jpeg", [مولد تابع روی ۳ هرتز], width: 50%) <fig-64>
 
 سپس کابلی بردارید که دو سر آن مطابق @fig-65 باشد.
 
-#pic("assets/image62.jpeg", width: 100%) <fig-65>
+#pic("assets/image62.jpeg", [کابل اتصال کلاک], width: 100%) <fig-65>
 
 یک سر را مطابق @fig-66 به دومین سوکت از سمت راست مولد تابع وصل کنید.
 
-#pic("assets/image63.jpeg", width: 39%) <fig-66>
+#pic("assets/image63.jpeg", [اتصال به مولد تابع], width: 39%) <fig-66>
 
 سرهای دیگر کابل را مطابق @fig-67 به بورد FPGA وصل نمایید.
 
-#pic("assets/image64.png", width: 85%) <fig-67>
+#pic("assets/image64.png", [اتصال کلاک به بورد FPGA], width: 85%) <fig-67>
 
 برای استفاده از این کلاک خارجی، پایه ۷۹ FPGA را انتخاب کنید.
 
@@ -565,24 +592,24 @@
 
 روی فایل شماتیک اصلی پروژه راست‌کلیک کنید و گزینه مشخص‌شده در @fig-68 را بزنید تا یک فایل شماتیک جدید ساخته شود.
 
-#pic("assets/image65.png", width: 68%) <fig-68>
+#pic("assets/image65.png", [ایجاد فایل شماتیک برای ماژول], width: 68%) <fig-68>
 
 نام این فایل، نام ماژول هم خواهد بود؛ بنابراین در نام‌گذاری مطابق @fig-69 دقت کنید.
 
-#pic("assets/image66.png", width: 99%) <fig-69>
+#pic("assets/image66.png", [نام‌گذاری ماژول], width: 99%) <fig-69>
 
 ابتدا شماتیک مورد نظر را در این فایل جدید رسم کنید. در نمونه @fig-70 یک نیم‌جمع‌کننده (Half Adder) رسم شده است.
 
-#pic("assets/image67.png", width: 61%) <fig-70>
+#pic("assets/image67.png", [شماتیک نیم‌جمع‌کننده], width: 61%) <fig-70>
 
 سپس در قسمت #ui[Design] روی #ui[+] کنار #ui[Design Utilities] کلیک کنید و #ui[Create Schematic Symbol] را مطابق @fig-71 اجرا کنید تا تیک سبز ظاهر شود.
 
-#pic("assets/image68.png", width: 69%) <fig-71>
+#pic("assets/image68.png", [ایجاد نماد شماتیک], width: 69%) <fig-71>
 
 بعد از دیدن تیک سبز، به فایل شماتیک اصلی برگردید. در قسمت #ui[Symbols] نام فایل شماتیک جدید را جستجو کنید؛ باید مطابق @fig-72 در فهرست دیده شود.
 
-#pic("assets/image69.png", width: 69%) <fig-72>
+#pic("assets/image69.png", [جستجوی نماد ماژول], width: 69%) <fig-72>
 
 نماد ماژول را مطابق @fig-73 در محل دلخواه روی شماتیک اصلی قرار دهید.
 
-#pic("assets/image70.png", width: 68%) <fig-73>
+#pic("assets/image70.png", [قرار دادن ماژول در شماتیک اصلی], width: 68%) <fig-73>
