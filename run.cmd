@@ -1,5 +1,5 @@
 @echo off
-REM Launcher for run.ps1 - elevates and bypasses execution policy.
+REM Launcher for run.ps1. Runs in this window; does not ask for administrator rights.
 REM Double-click this file, or run from a terminal:  run.cmd
 REM Compiles src/main.typ to output\madar-manteghi.pdf via a pinned Typst.
 
@@ -15,16 +15,20 @@ if not exist "%PS1%" (
     exit /b 1
 )
 
-REM Relaunch elevated (run.ps1 requires -RunAsAdministrator)
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Requesting administrator privileges...
-    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs"
-    exit /b
+REM powershell is often missing from PATH, so other .cmd files fail with
+REM "'powershell' is not recognized". Call the Windows PowerShell 5.1 exe directly.
+set "PS_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PS_EXE%" set "PS_EXE=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PS_EXE%" set "PS_EXE=%SystemRoot%\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PS_EXE%" (
+    echo [run.cmd] ERROR: powershell.exe was not found.
+    echo Expected:
+    echo   %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe
+    pause
+    exit /b 1
 )
 
-REM Already elevated - run the PowerShell script
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %*
+"%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %*
 
 echo.
 echo ============================================================
