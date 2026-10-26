@@ -2,13 +2,15 @@
 # =============================================================================
 # run.sh — Auto setup-or-compile for مدار منطقی (Linux / macOS / WSL)
 #
-# Host bootstrap (no OS package manager): curl (static binary if missing) + Nix
-# (official installer). Typst 0.13.1 and parastoo-fonts come from devops/flake.nix
-# (nixpkgs 25.05). Never apt/dnf/pacman/brew. Never Docker.
+# Host bootstrap follows ../librelane/run.sh (scripts/host-prep.sh): git + curl
+# via the distro package manager (static curl if that cannot run), free-disk
+# check, git work-tree repair, then Nix. Typst 0.13.1 and parastoo-fonts come
+# from devops/flake.nix (nixpkgs 25.05). Typst is not installed with the distro
+# package manager or Docker.
 #
-# First run on a machine: ensure curl + Nix, lock flake, download the shell into
-# a system cache (~/.cache/madar-manteghi/<flake-hash>/). That fetch happens once.
-# Later runs: reuse the cached lock + profile + print-dev-env.
+# The Nix shell is fetched from a copy of devops/ under
+# ~/.cache/madar-manteghi/<flake-hash>/ so a dirty document tree is not copied
+# into the Nix store. That fetch happens once per machine and flake.
 #
 # Flow inside nix develop:
 #   typst compile src/main.typ → output/madar-manteghi.pdf
@@ -28,8 +30,12 @@ warn()  { echo -e "${YELLOW}[madar-manteghi]${NC}  $*"; }
 error() { echo -e "${RED}[madar-manteghi]${NC} $*" >&2; }
 step()  { echo -e "${CYAN}[madar-manteghi]${NC}  $*"; }
 
+# WSL/Windows mounts and some editors leave CRLF in shell scripts; bash then errors
+# with "$'\r': command not found" when sourcing cached devenv.sh.
+# Returns 0 always. Sets SANITIZE_CHANGED=1 when the file was rewritten.
 sanitize_shell_file() {
     local f="$1"
+    SANITIZE_CHANGED=0
     [ -f "${f}" ] || return 0
     if ! grep -q $'\r' "${f}" 2>/dev/null; then
         return 0
@@ -37,9 +43,16 @@ sanitize_shell_file() {
     warn "Fixing Windows (CRLF) line endings in $(basename "${f}") ..."
     local tmp="${f}.lf.$$"
     tr -d '\r' < "${f}" > "${tmp}" && mv -f "${tmp}" "${f}"
+    SANITIZE_CHANGED=1
+    return 0
 }
 
+# run.sh may live on /mnt/c with CRLF. Rewrite it, then start that copy so
+# this process does not keep parsing the old CR bytes.
 sanitize_shell_file "${BASH_SOURCE[0]}"
+if [ "${SANITIZE_CHANGED}" = "1" ] && [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    exec bash "${BASH_SOURCE[0]}" "$@"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
@@ -47,27 +60,78 @@ READY_MARKER="${SCRIPT_DIR}/.document-nix-ready"
 BOOTSTRAP_DIR="${SCRIPT_DIR}/.document-bootstrap"
 BOOTSTRAP_BIN="${BOOTSTRAP_DIR}/bin"
 FLAKE_DIR="${SCRIPT_DIR}/devops"
-SYSTEM_FLAKE=""
-flake_ref() { echo "path:${SYSTEM_FLAKE}"; }
-CURL_STATIC_VERSION="8.20.0"
-NIX_INSTALL_URL="https://releases.nixos.org/nix/nix-2.24.12/install"
 SYSTEM_CACHE_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/madar-manteghi"
+
+if [ ! -f "${SCRIPT_DIR}/scripts/host-prep.sh" ]; then
+    if command -v git >/dev/null 2>&1 \
+        && git -C "${SCRIPT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+        && git -C "${SCRIPT_DIR}" cat-file -e "HEAD:scripts/host-prep.sh" 2>/dev/null; then
+        warn "Restoring scripts/host-prep.sh from git ..."
+        git -C "${SCRIPT_DIR}" -c "safe.directory=${SCRIPT_DIR}" checkout HEAD -- scripts/host-prep.sh \
+            || git -C "${SCRIPT_DIR}" checkout HEAD -- scripts/host-prep.sh \
+            || true
+    fi
+fi
+if [ ! -f "${SCRIPT_DIR}/scripts/host-prep.sh" ]; then
+    error "Missing ${SCRIPT_DIR}/scripts/host-prep.sh"
+    exit 1
+fi
+sanitize_shell_file "${SCRIPT_DIR}/scripts/host-prep.sh"
+# shellcheck source=scripts/host-prep.sh
+. "${SCRIPT_DIR}/scripts/host-prep.sh"
+
+CURL_STATIC_VERSION="8.20.0"
+# NixOS 25.05's package manager is Nix 2.28.5 (nixpkgs nixVersions.stable).
+# Any other Nix, including a newer 2.35, is replaced. nix upgrade-nix is not
+# used: it installs the latest manager and changes flake.lock behavior.
+NIX_PIN_VERSION="2.28.5"
+NIX_PIN_MAJOR=2
+NIX_PIN_MINOR=28
+NIX_PIN_PATCH=5
+NIX_INSTALL_URL="https://releases.nixos.org/nix/nix-${NIX_PIN_VERSION}/install"
 SYSTEM_CACHE=""
 SYSTEM_PROFILE=""
 SYSTEM_DEVENV=""
 SYSTEM_READY=""
 SYSTEM_LOCK=""
+SYSTEM_FLAKE=""
 
 FORCE_SETUP=false
 PREP_ONLY=false
 DO_LAUNCH=false
+RUN_SH_ARGS=()
 
 for arg in "$@"; do
     case "$arg" in
         --help|-h)
-            sed -n '3,22p' "$0" | sed 's/^# //'
+            cat <<'EOF'
+مدار منطقی — setup or compile (Linux / macOS / WSL).
+
+  ./run.sh              compile src/main.typ → output/madar-manteghi.pdf
+  ./run.sh --force-setup
+  ./run.sh --prep-only  Nix env only; do not compile
+
+Typst 0.13.1 and Parastoo fonts come from devops/flake.nix (NixOS 25.05).
+System fonts are ignored.
+
+Missing git and curl are installed with the distro package manager
+(Homebrew on macOS). If curl still cannot be installed, a static binary
+is downloaded. xz is installed the same way, or a Python lzma helper is
+used so the Nix installer can unpack. Nix 2.28.5 (the NixOS 25.05 package
+manager) is required. Any other Nix is replaced. On NixOS, /nix is kept
+and 2.28.5 is installed into your user profile.
+
+sudo ./run.sh continues as the user who invoked sudo.
+
+First run wants about 2 GiB free on the Nix store disk. Later runs keep
+a smaller reserve. Override with MADAR_INSTALL_FREE_BYTES,
+MADAR_NIX_FREE_BYTES, MADAR_MIN_FREE_BYTES, or MADAR_TMP_FREE_BYTES.
+
+On native Windows, use run.cmd.
+EOF
             exit 0 ;;
         --__launch)    DO_LAUNCH=true ;;
+        --__nix-sg)    export NIX_SG=1 ;;
         --force-setup) FORCE_SETUP=true ;;
         --prep-only)   PREP_ONLY=true ;;
         *)
@@ -89,6 +153,12 @@ source_nix_profile() {
 }
 
 enable_flakes() {
+    # A previous nix-channel must not replace the locked nixpkgs.
+    export NIX_PATH=""
+    if [ "${MADAR_NIX_CONFIG_SET:-}" = "1" ]; then
+        return 0
+    fi
+    export MADAR_NIX_CONFIG_SET=1
     export NIX_CONFIG="${NIX_CONFIG:-}
 experimental-features = nix-command flakes
 substituters = https://cache.nixos.org
@@ -99,21 +169,16 @@ warn-dirty = false
 }
 
 nix_cmd() {
-    nix --accept-flake-config "$@"
+    "${NIX_BIN:-nix}" --accept-flake-config "$@"
 }
 
 file_hash() {
-    local f="$1"
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "${f}" | awk '{print $1}'
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "${f}" | awk '{print $1}'
-    elif command -v openssl >/dev/null 2>&1; then
-        openssl dgst -sha256 "${f}" | awk '{print $NF}'
-    else
+    local f="$1" sum
+    if ! sum="$(host_file_hash "${f}")"; then
         error "Need sha256sum, shasum, or openssl to cache the Nix env."
         return 1
     fi
+    printf '%s\n' "${sum}"
 }
 
 init_system_cache_paths() {
@@ -131,6 +196,8 @@ init_system_cache_paths() {
     SYSTEM_FLAKE="${SYSTEM_CACHE}/flake"
 }
 
+flake_ref() { echo "path:${SYSTEM_FLAKE}"; }
+
 stage_flake() {
     mkdir -p "${SYSTEM_FLAKE}"
     cp -f "${FLAKE_DIR}/flake.nix" "${SYSTEM_FLAKE}/flake.nix"
@@ -145,6 +212,24 @@ restore_cached_flake_lock() {
         cp -f "${SYSTEM_LOCK}" "${FLAKE_DIR}/flake.lock"
         info "Reusing flake.lock already fetched on this system"
     fi
+}
+
+# Nix 2.35: "requires lock file changes but they're not allowed due to '--no-update-lock-file'".
+# Older Nix: unlocked inputs, or a lock that does not match flake.nix.
+flake_lock_rejected() {
+    local err_file="$1"
+    [ -f "${err_file}" ] || return 1
+    grep -qE 'unlocked input|lock file contains|does not match|requires lock file changes|no-update-lock-file' \
+        "${err_file}" 2>/dev/null
+}
+
+refresh_flake_lock() {
+    warn "flake.lock does not match this Nix. Updating it, then retrying."
+    stage_flake
+    nix_cmd flake lock "$(flake_ref)"
+    mkdir -p "${SYSTEM_CACHE}" "${FLAKE_DIR}"
+    cp -f "${SYSTEM_FLAKE}/flake.lock" "${SYSTEM_LOCK}"
+    cp -f "${SYSTEM_FLAKE}/flake.lock" "${FLAKE_DIR}/flake.lock"
 }
 
 invalidate_system_nix_cache() {
@@ -162,8 +247,10 @@ prepend_bootstrap_path() {
             *) export PATH="${BOOTSTRAP_BIN}:${PATH}" ;;
         esac
     fi
+    hash -r 2>/dev/null || true
 }
 
+# Drop Windows/WSL drive PATH entries so host binaries never win.
 prefer_unix_path() {
     local cleaned="" part oldifs
     oldifs="${IFS}"
@@ -192,7 +279,7 @@ nix_env_ready() {
 
     command -v nix >/dev/null 2>&1 || return 1
     command -v curl >/dev/null 2>&1 || return 1
-    nix flake --help >/dev/null 2>&1 || return 1
+    "${NIX_BIN:-nix}" flake --help >/dev/null 2>&1 || return 1
     [ -f "${FLAKE_DIR}/flake.nix" ] || return 1
     [ -n "${SYSTEM_READY}" ] && [ -f "${SYSTEM_READY}" ] || return 1
     [ -e "${SYSTEM_PROFILE}" ] || return 1
@@ -202,19 +289,18 @@ nix_env_ready() {
 }
 
 http_get() {
-    local url="$1" dest="$2"
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --proto '=https' --tlsv1.2 -o "${dest}" "${url}"
-    else
-        error "Cannot download ${url}: curl is required (bootstrap)."
-        return 1
-    fi
+    host_http_get "$@"
 }
 
 extract_tar_xz() {
     local archive="$1" dest="$2"
     mkdir -p "${dest}"
     if tar -xJf "${archive}" -C "${dest}" 2>/dev/null; then
+        return 0
+    fi
+    # tar without built-in lzma can still unpack if `xz` (or the Python helper) is on PATH.
+    if command -v xz >/dev/null 2>&1 \
+        && xz -dc "${archive}" 2>/dev/null | tar -xf - -C "${dest}" 2>/dev/null; then
         return 0
     fi
     error "Cannot extract ${archive}: need tar with xz support (tar -xJf)."
@@ -254,7 +340,7 @@ ensure_curl() {
         return 0
     fi
 
-    step "curl not found — installing static binary (no OS package manager) ..."
+    step "curl not found — downloading a static binary ..."
     local asset url archive extract_dir found
     asset="$(static_curl_asset)" || exit 1
     url="https://github.com/stunnel/static-curl/releases/download/${CURL_STATIC_VERSION}/${asset}"
@@ -277,6 +363,78 @@ ensure_curl() {
     rm -rf "${extract_dir}" "${archive}"
     prepend_bootstrap_path
     info "curl installed (static): $(curl --version 2>/dev/null | head -1)"
+}
+
+# Distro packages first (git + curl). Static curl covers hosts with no
+# package manager. A git checkout still needs git itself.
+ensure_bootstrap_tools() {
+    local had_git=0 had_curl=0
+    # xz before a static curl download: tar -xJf may shell out to xz.
+    ensure_xz || exit 1
+    command -v git >/dev/null 2>&1 && had_git=1
+    command -v curl >/dev/null 2>&1 && had_curl=1
+    if [ "${had_git}" -eq 0 ] || [ "${had_curl}" -eq 0 ]; then
+        host_ensure_git_and_curl \
+            || warn "Could not install missing git/curl with the system package manager."
+        if ! command -v curl >/dev/null 2>&1; then
+            ensure_curl
+        elif [ "${had_curl}" -eq 0 ]; then
+            info "curl: $(curl --version 2>/dev/null | head -1)"
+        fi
+        if ! command -v git >/dev/null 2>&1; then
+            if [ -e "${SCRIPT_DIR}/.git" ]; then
+                error "This checkout is a Git work tree, but git is not installed."
+                error "Install git and run ./run.sh again."
+                exit 1
+            fi
+            warn "git is not installed. Nix can still download flake inputs; local Git checks are skipped."
+        elif [ "${had_git}" -eq 0 ]; then
+            info "git: $(git --version 2>/dev/null | head -1)"
+        fi
+    fi
+}
+
+# The Nix installer refuses to unpack its .tar.xz unless `xz` is on PATH.
+# tar -xJf is what actually extracts; this command only has to exist and
+# decompress stdin when tar shells out to it.
+install_python_xz() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 -c 'import lzma' >/dev/null 2>&1 || return 1
+    mkdir -p "${BOOTSTRAP_BIN}"
+    cat > "${BOOTSTRAP_BIN}/xz" <<'EOF'
+#!/bin/sh
+exec python3 -c 'import lzma, sys
+args = [a for a in sys.argv[1:] if a and not a.startswith("-")]
+raw = open(args[-1], "rb") if args else sys.stdin.buffer
+src = lzma.open(raw, "rb")
+while True:
+    chunk = src.read(1024 * 1024)
+    if not chunk:
+        break
+    sys.stdout.buffer.write(chunk)
+' "$@"
+EOF
+    chmod 755 "${BOOTSTRAP_BIN}/xz"
+    prepend_bootstrap_path
+}
+
+ensure_xz() {
+    if command -v xz >/dev/null 2>&1; then
+        return 0
+    fi
+    host_ensure_commands xz \
+        || warn "Could not install xz with the system package manager."
+    if command -v xz >/dev/null 2>&1; then
+        info "xz: $(xz --version 2>/dev/null | head -1)"
+        return 0
+    fi
+    step "xz not found — using Python's lzma so the Nix installer can unpack."
+    if ! install_python_xz; then
+        error "The Nix installer needs xz to unpack its tarball."
+        error "Install it and re-run. On Debian/Ubuntu: sudo apt-get install -y xz-utils"
+        return 1
+    fi
+    info "xz: python lzma helper at ${BOOTSTRAP_BIN}/xz"
 }
 
 nix_present() {
@@ -322,6 +480,7 @@ is_linux() {
     [ "$(uname -s)" = Linux ]
 }
 
+# Root or a usable sudo (daemon install needs elevation on Linux).
 can_install_nix_daemon() {
     if [ "$(id -u)" -eq 0 ]; then
         return 0
@@ -329,17 +488,19 @@ can_install_nix_daemon() {
     command -v sudo >/dev/null 2>&1
 }
 
+# Pick multi-user (--daemon) vs single-user (--no-daemon) before downloading the installer.
+# Equivalent manual commands:
+#   curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh -s -- --daemon
+#   curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh -s -- --no-daemon
 detect_nix_install_mode() {
     if is_macos; then
         echo "daemon"
         return
     fi
     if is_wsl; then
-        if systemd_running && can_install_nix_daemon; then
-            echo "daemon"
-        else
-            echo "no-daemon"
-        fi
+        # The multi-user daemon installer starts systemd units and user
+        # namespaces. On WSL that can kill the distro. Always single-user.
+        echo "no-daemon"
         return
     fi
     if is_linux; then
@@ -370,7 +531,7 @@ explain_nix_install_choice() {
             ;;
         *)
             if is_wsl; then
-                info "Nix install: single-user (--no-daemon) — WSL without systemd (or no sudo)"
+                info "Nix install: single-user (--no-daemon) — WSL does not use the daemon installer"
             elif is_linux; then
                 info "Nix install: single-user (--no-daemon) — no systemd or no sudo for multi-user"
             else
@@ -384,6 +545,22 @@ explain_nix_install_choice() {
 }
 
 run_with_pty() {
+    # Nix's installer (and nix-env) call tcgetattr; without a TTY they abort:
+    # "Inappropriate ioctl for device" / Assertion 'pid != -1'.
+    # A synthetic PTY (python pty, script) can crash WSL during that ioctl.
+    if is_wsl; then
+        if [ -t 0 ] && [ -t 1 ]; then
+            "$@"
+            return $?
+        fi
+        if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+            "$@" < /dev/tty > /dev/tty 2>&1
+            return $?
+        fi
+        error "Nix install on WSL needs an interactive terminal."
+        error "Run ./run.sh from a WSL shell, not a background job."
+        return 1
+    fi
     if [ -t 0 ] && [ -t 1 ]; then
         "$@"
         return $?
@@ -419,35 +596,152 @@ run_with_pty() {
     "$@"
 }
 
-remove_incomplete_nix() {
-    if nix_present; then
-        return 0
+nix_activate_bin() {
+    local bin="$1" dir
+    NIX_BIN="${bin}"
+    export NIX_BIN
+    dir="$(dirname "${bin}")"
+    case ":${PATH}:" in
+        *":${dir}:"*) ;;
+        *) export PATH="${dir}:${PATH}" ;;
+    esac
+    hash -r 2>/dev/null || true
+}
+
+# Drop a previous Nix (any version) so the pinned installer can run.
+# NixOS keeps /nix; that store belongs to the system generation.
+nix_remove_previous() {
+    local u f
+    if host_is_nixos; then
+        error "This is NixOS. Refusing to delete /nix."
+        error "Upgrade Nix with the system: sudo nixos-rebuild switch"
+        return 1
     fi
-    if [ ! -e /nix ] && [ ! -e "${HOME}/.nix-profile" ]; then
-        return 0
+    info "Removing the previous Nix installation."
+    if command -v systemctl >/dev/null 2>&1; then
+        host_as_root systemctl stop nix-daemon.socket nix-daemon.service >/dev/null 2>&1 || true
+        host_as_root systemctl disable nix-daemon.socket nix-daemon.service >/dev/null 2>&1 || true
+        host_as_root systemctl daemon-reload >/dev/null 2>&1 || true
     fi
-    warn "Previous Nix install did not finish — clearing the incomplete tree"
-    if [ "$(id -u)" -eq 0 ] || { [ -e /nix ] && [ -O /nix ]; } || { [ -e /nix ] && [ -w /nix ]; }; then
-        rm -rf /nix "${HOME}/.nix-profile" "${HOME}/.nix-defexpr" "${HOME}/.nix-channels" \
-            /etc/nix 2>/dev/null || true
-        rm -f /etc/profile.d/nix.sh /etc/profile.d/nix-daemon.sh 2>/dev/null || true
-    else
-        error "Incomplete Nix files in /nix but this user cannot remove them."
-        error "As root run:  rm -rf /nix ~/.nix-profile ~/.nix-defexpr ~/.nix-channels"
-        error "Then re-run ./run.sh"
-        exit 1
+    for f in /etc/bashrc /etc/bash.bashrc /etc/profile /etc/zsh/zshrc /etc/zshrc; do
+        if [ -f "${f}.backup-before-nix" ]; then
+            host_as_root cp -a "${f}.backup-before-nix" "${f}" || true
+        fi
+    done
+    host_as_root rm -rf \
+        /nix \
+        /etc/nix \
+        /etc/profile.d/nix.sh \
+        /etc/profile.d/nix-daemon.sh \
+        /etc/tmpfiles.d/nix-daemon.conf \
+        /usr/lib/systemd/system/nix-daemon.service \
+        /usr/lib/systemd/system/nix-daemon.socket \
+        /etc/systemd/system/nix-daemon.service \
+        /etc/systemd/system/nix-daemon.socket \
+        /root/.nix-profile /root/.nix-defexpr /root/.nix-channels \
+        /root/.local/state/nix /root/.cache/nix \
+        || return 1
+    rm -rf \
+        "${HOME:-}/.nix-profile" "${HOME:-}/.nix-defexpr" "${HOME:-}/.nix-channels" \
+        "${HOME:-}/.local/state/nix" "${HOME:-}/.cache/nix" \
+        "${HOME:-}/.config/nix"
+    if command -v getent >/dev/null 2>&1 && getent group nixbld >/dev/null 2>&1; then
+        while IFS= read -r u; do
+            [ -n "${u}" ] || continue
+            host_as_root userdel "${u}" >/dev/null 2>&1 || true
+        done < <(getent passwd | awk -F: '$1 ~ /^nixbld[0-9]+$/ { print $1 }')
+        host_as_root groupdel nixbld >/dev/null 2>&1 || true
+    fi
+    if command -v getent >/dev/null 2>&1 && getent group nix-daemon >/dev/null 2>&1; then
+        host_as_root groupdel nix-daemon >/dev/null 2>&1 || true
+    fi
+    hash -r 2>/dev/null || true
+    unset NIX_BIN || true
+}
+
+nix_reload_bin() {
+    local best
+    hash -r 2>/dev/null || true
+    source_nix_profile || true
+    enable_flakes
+    if ! best="$(host_nix_select_bin)"; then
+        error "Nix install finished, but the nix command is still missing."
+        return 1
+    fi
+    nix_activate_bin "${best}"
+}
+
+nix_version_is_pinned() {
+    [ "$1" -eq "${NIX_PIN_MAJOR}" ] \
+        && [ "$2" -eq "${NIX_PIN_MINOR}" ] \
+        && [ "$3" -eq "${NIX_PIN_PATCH}" ]
+}
+
+# Use an already-installed Nix 2.28.5 even when a newer distro or NixOS
+# binary is earlier on PATH.
+nix_prefer_pinned_bin() {
+    local cand maj min pat
+    for cand in \
+        "${HOME:-}/.nix-profile/bin/nix" \
+        "/nix/var/nix/profiles/per-user/${USER:-}/profile/bin/nix" \
+        /nix/var/nix/profiles/default/bin/nix \
+        /run/current-system/sw/bin/nix
+    do
+        [ -n "${cand}" ] && [ -x "${cand}" ] || continue
+        if read -r maj min pat < <(host_nix_parse_version "${cand}"); then
+            if nix_version_is_pinned "${maj}" "${min}" "${pat}"; then
+                nix_activate_bin "${cand}"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+nixpkgs_25_05_rev() {
+    local lock="${FLAKE_DIR}/flake.lock" rev
+    [ -f "${lock}" ] || return 1
+    command -v awk >/dev/null 2>&1 || return 1
+    rev="$(awk '
+        /"rev":/ { gsub(/[",]/, "", $2); rev = $2 }
+        /"ref": "nixos-25.05"/ { print rev; exit }
+    ' "${lock}")"
+    [ -n "${rev}" ] || return 1
+    printf '%s\n' "${rev}"
+}
+
+# NixOS owns /nix. Put the pinned package manager in the user profile.
+nix_install_pinned_on_nixos() {
+    local rev
+    rev="$(nixpkgs_25_05_rev)" || {
+        error "Could not read the nixos-25.05 revision from ${FLAKE_DIR}/flake.lock."
+        return 1
+    }
+    info "This is NixOS. Installing Nix ${NIX_PIN_VERSION} into the user profile."
+    info "The system /nix store is left in place."
+    "${NIX_BIN}" --extra-experimental-features "nix-command flakes" profile install \
+        --accept-flake-config \
+        "github:NixOS/nixpkgs/${rev}#nixVersions.nix_2_28" || return 1
+    if ! nix_prefer_pinned_bin; then
+        error "Nix ${NIX_PIN_VERSION} installed, but it is not available in the user profile."
+        return 1
     fi
 }
 
-ensure_nix() {
-    if nix_present; then
-        info "Nix: $(nix --version 2>/dev/null || true)"
-        return 0
+nix_install_pinned() {
+    local installer flags mode
+    if host_is_nixos; then
+        error "Nix is not available on this NixOS system."
+        error "Boot a generation that includes nix, then run ./run.sh again."
+        return 1
     fi
-
-    step "Nix not found — installing via official installer (no OS package manager) ..."
+    ensure_xz || return 1
     ensure_curl
-    remove_incomplete_nix
+    if [ "${NIX_REPLACE:-}" = "1" ]; then
+        nix_remove_previous || return 1
+    elif ! nix_present && { [ -e /nix ] || [ -e "${HOME}/.nix-profile" ]; }; then
+        nix_remove_previous || return 1
+    fi
 
     export USER="${USER:-$(id -un 2>/dev/null || echo root)}"
     local tmp="${TMPDIR:-/tmp}"
@@ -456,64 +750,416 @@ ensure_nix() {
         *) tmp="${tmp}/" ;;
     esac
     export TMPDIR="${tmp}"
+    export NIX_INSTALLER_YES=1
+    export NIX_INSTALLER_NO_CHANNEL_ADD=1
 
     mkdir -p "${BOOTSTRAP_DIR}/tmp"
-    local installer flags mode
     installer="${BOOTSTRAP_DIR}/tmp/nix-installer.sh"
-    http_get "${NIX_INSTALL_URL}" "${installer}" || exit 1
+    http_get "${NIX_INSTALL_URL}" "${installer}" || return 1
     chmod +x "${installer}"
 
     mode="$(detect_nix_install_mode)"
     case "${mode}" in
-        daemon) flags="--daemon --yes" ;;
-        *) flags="--no-daemon --yes" ;;
+        daemon) flags="--daemon --yes --no-channel-add" ;;
+        *) flags="--no-daemon --yes --no-channel-add" ;;
     esac
     explain_nix_install_choice "${mode}"
     info "Nix installer flags: ${flags}"
+    if [ "${mode}" != "daemon" ]; then
+        host_ensure_user_nix_dir || return 1
+    fi
     # shellcheck disable=SC2086
     if ! run_with_pty sh "${installer}" ${flags}; then
+        if is_wsl; then
+            error "Nix installer failed. Not running it again on WSL."
+            error "If /nix was left behind and you own it: rm -rf /nix ~/.nix-profile"
+            return 1
+        fi
         if [ "${mode}" = "daemon" ]; then
             warn "Daemon install failed — retrying single-user (--no-daemon)"
-            remove_incomplete_nix
-            if ! run_with_pty sh "${installer}" --no-daemon --yes; then
+            nix_remove_previous || return 1
+            host_ensure_user_nix_dir || return 1
+            if ! run_with_pty sh "${installer}" --no-daemon --yes --no-channel-add; then
                 error "Nix installer failed. If /nix was left behind, remove it and re-run."
-                exit 1
+                return 1
             fi
         else
-            error "Nix installer failed. If /nix was left behind, remove it and re-run."
-            exit 1
+            warn "Nix installer failed. Removing the previous tree and retrying once."
+            nix_remove_previous || return 1
+            host_ensure_user_nix_dir || return 1
+            # shellcheck disable=SC2086
+            if ! run_with_pty sh "${installer}" ${flags}; then
+                error "Nix installer failed. If /nix was left behind, remove it and re-run."
+                return 1
+            fi
+        fi
+    fi
+    rm -f "${installer}"
+    hash -r 2>/dev/null || true
+    source_nix_profile || true
+    if ! nix_present && ! host_nix_select_bin >/dev/null 2>&1; then
+        error "Nix installed but not on PATH. Open a new terminal and re-run."
+        return 1
+    fi
+    nix_reload_bin || return 1
+    info "Nix installed: $("${NIX_BIN}" --version 2>/dev/null || true)"
+}
+
+nix_replace_and_recheck() {
+    if host_is_nixos; then
+        error "This is NixOS. Refusing to delete /nix."
+        error "Set nix.package = pkgs.nixVersions.nix_2_28 and run: sudo nixos-rebuild switch"
+        return 1
+    fi
+    if [ "${NIX_REPAIR:-}" = "1" ]; then
+        error "Nix is still not usable after replacing the previous install."
+        return 1
+    fi
+    export NIX_REPAIR=1
+    export NIX_REPLACE=1
+    step "Replacing this Nix with pinned Nix ${NIX_PIN_VERSION}."
+    nix_install_pinned || return 1
+    nix_reload_bin || return 1
+    nix_check_existing
+}
+
+# Start a stopped daemon, or re-enter as a member of nix-daemon.
+# Returns 0 when the caller should run the Nix check again.
+nix_revive_store() {
+    local msg="$1" members a quoted
+    case "${msg}" in
+        *daemon*|*socket*|*Connection\ refused*|*disconnected*)
+            if command -v systemctl >/dev/null 2>&1; then
+                info "Starting the Nix daemon from the previous install."
+                host_as_root systemctl start nix-daemon.socket nix-daemon.service >/dev/null 2>&1 || true
+                return 0
+            fi
+            ;;
+    esac
+    case "${msg}" in
+        *Permission\ denied*|*Operation\ not\ permitted*|*not\ allowed*)
+            if [ "${NIX_SG:-}" = "1" ]; then
+                return 1
+            fi
+            if command -v getent >/dev/null 2>&1 && getent group nix-daemon >/dev/null 2>&1; then
+                members="$(getent group nix-daemon | awk -F: '{ print $4 }')"
+                case ",${members}," in
+                    *",${USER},"*) ;;
+                    *)
+                        info "Adding ${USER} to the nix-daemon group."
+                        host_as_root usermod -aG nix-daemon "${USER}" || return 1
+                        ;;
+                esac
+                if command -v sg >/dev/null 2>&1; then
+                    info "Opening the Nix store as a member of nix-daemon."
+                    export NIX_SG=1
+                    quoted=""
+                    if [ "${#RUN_SH_ARGS[@]}" -gt 0 ]; then
+                        for a in "${RUN_SH_ARGS[@]}"; do
+                            quoted="${quoted} $(printf '%q' "${a}")"
+                        done
+                    fi
+                    exec sg nix-daemon -c "cd $(printf '%q' "${SCRIPT_DIR}") && exec $(printf '%q' "${SCRIPT_DIR}/run.sh") --__nix-sg${quoted}"
+                fi
+            fi
+            ;;
+    esac
+    return 1
+}
+
+nix_foreign_channel() {
+    local url="" ver="" f
+    if command -v nix-channel >/dev/null 2>&1; then
+        url="$(nix-channel --list 2>/dev/null | awk '$1=="nixpkgs" || $1=="nixos" { print $2; exit }' || true)"
+    fi
+    for f in \
+        "${HOME:-}/.nix-defexpr/channels/nixpkgs/.version" \
+        "/nix/var/nix/profiles/per-user/${USER:-}/channels/nixpkgs/.version" \
+        "/nix/var/nix/profiles/per-user/root/channels/nixpkgs/.version"
+    do
+        [ -f "${f}" ] || continue
+        ver="$(tr -d '[:space:]' < "${f}" || true)"
+        [ -n "${ver}" ] && break
+    done
+    if [ -z "${url}" ] && [ -z "${ver}" ]; then
+        return 0
+    fi
+    if [[ "${url}" =~ nixos-25\.05([^0-9]|$) ]]; then
+        return 0
+    fi
+    if [ -z "${url}" ] && [[ "${ver}" =~ ^25\.05([^0-9]|$) ]]; then
+        return 0
+    fi
+    if [ -n "${url}" ] && [ -n "${ver}" ]; then
+        printf '%s (checkout %s)\n' "${url}" "${ver}"
+    elif [ -n "${url}" ]; then
+        printf '%s\n' "${url}"
+    else
+        printf 'checkout %s\n' "${ver}"
+    fi
+}
+
+nix_store_error() {
+    local msg="$1" line
+    error "Nix is installed, but the existing store cannot be used."
+    while IFS= read -r line; do
+        [ -n "${line}" ] || continue
+        error "${line}"
+    done <<EOF
+$(printf '%s\n' "${msg}" | head -n 6)
+EOF
+    case "${msg}" in
+        *experimental*feature*|*flakes*)
+            error "This run sets experimental-features in NIX_CONFIG. If that is overridden, add to nix.conf:"
+            error "  experimental-features = nix-command flakes"
+            ;;
+        *daemon*|*socket*|*Connection\ refused*|*disconnected*)
+            error "Start the Nix daemon:  sudo systemctl start nix-daemon"
+            error "If this user was just added to the nix-daemon group, log out and back in."
+            ;;
+        *Permission\ denied*|*Operation\ not\ permitted*|*not\ allowed*)
+            error "This user cannot access the store from the previous Nix install."
+            error "Multi-user Nix: add the user to nix-daemon and log in again."
+            error "Single-user Nix: run as the user who originally installed Nix."
+            ;;
+        *database*|*schema*|*not\ compatible*)
+            error "The Nix database was written by a different Nix version."
+            error "Re-run ./run.sh to replace it with Nix ${NIX_PIN_VERSION}."
+            ;;
+        *)
+            error "Re-run ./run.sh after the previous Nix is removed, or reinstall from ${NIX_INSTALL_URL}"
+            ;;
+    esac
+}
+
+nix_expected_system() {
+    local os arch cpu sys
+    os="$(uname -s)"
+    arch="$(uname -m)"
+    case "${os}" in
+        Linux) sys="linux" ;;
+        Darwin) sys="darwin" ;;
+        *) return 1 ;;
+    esac
+    case "${arch}" in
+        x86_64|amd64) cpu="x86_64" ;;
+        aarch64|arm64) cpu="aarch64" ;;
+        *) return 1 ;;
+    esac
+    printf '%s-%s\n' "${cpu}" "${sys}"
+}
+
+# Previous Nix: too old for flake.lock, a different store schema, or a
+# daemon left behind by an earlier install. Any Nix other than 2.28.5 is replaced.
+nix_check_existing() {
+    local first best maj min pat channel err json url sver
+    local smaj smin sys feats store_msg expected
+
+    source_nix_profile || true
+    enable_flakes
+    first="$(command -v nix 2>/dev/null || true)"
+    if nix_prefer_pinned_bin; then
+        best="${NIX_BIN}"
+    elif ! best="$(host_nix_select_bin)"; then
+        if [ "${NIX_REPAIR:-}" = "1" ]; then
+            error "Nix binaries still do not run after reinstall."
+            return 1
+        fi
+        if host_is_nixos; then
+            error "Nix is not available on this NixOS system."
+            error "Boot a generation that includes nix, then run ./run.sh again."
+            return 1
+        fi
+        info "The Nix binary on this machine does not run. Replacing it."
+        nix_replace_and_recheck || return 1
+        return 0
+    else
+        nix_activate_bin "${best}"
+        if [ -n "${first}" ] && [ "${first}" != "${best}" ]; then
+            info "Using ${best} (newer Nix than ${first})."
         fi
     fi
 
-    hash -r 2>/dev/null || true
-    source_nix_profile || true
-    if ! nix_present; then
-        error "Nix installed but not on PATH. Open a new terminal and re-run."
-        exit 1
+    if ! read -r maj min pat < <(host_nix_parse_version "${NIX_BIN}"); then
+        if [ "${NIX_REPAIR:-}" = "1" ]; then
+            error "Nix at ${NIX_BIN} still does not report a version."
+            return 1
+        fi
+        info "Nix at ${NIX_BIN} did not report a version. Replacing it."
+        nix_replace_and_recheck || return 1
+        return 0
     fi
-    info "Nix installed: $(nix --version)"
+
+    channel="$(nix_foreign_channel || true)"
+    if ! nix_version_is_pinned "${maj}" "${min}" "${pat}"; then
+        if [ "${NIX_REPAIR:-}" = "1" ]; then
+            error "Nix ${maj}.${min}.${pat} is still not Nix ${NIX_PIN_VERSION} after reinstall."
+            return 1
+        fi
+        if host_is_nixos; then
+            if [ "${NIX_NIXOS_PIN_TRIED:-}" = "1" ]; then
+                error "This NixOS system still provides Nix ${maj}.${min}.${pat}, not Nix ${NIX_PIN_VERSION}."
+                error "Set nix.package = pkgs.nixVersions.nix_2_28 and run: sudo nixos-rebuild switch"
+                return 1
+            fi
+            export NIX_NIXOS_PIN_TRIED=1
+            nix_install_pinned_on_nixos || return 1
+            nix_check_existing || return 1
+            return 0
+        fi
+        info "Nix ${maj}.${min}.${pat} is not pinned Nix ${NIX_PIN_VERSION} (NixOS 25.05). Replacing it."
+        if [ -n "${channel}" ]; then
+            info "Existing nixpkgs channel: ${channel}"
+        fi
+        nix_replace_and_recheck || return 1
+        return 0
+    fi
+
+    if [ -n "${channel}" ]; then
+        warn "A previous nixpkgs channel is ${channel}."
+        warn "That channel is outside NixOS 25.05. This run ignores it."
+        warn "Packages come from devops/flake.lock (github:NixOS/nixpkgs/nixos-25.05)."
+    fi
+
+    err="${TMPDIR:-/tmp}/madar-manteghi-nix-check.$$"
+    json="$("${NIX_BIN}" store info --json 2>"${err}" || true)"
+    if [ -z "${json}" ]; then
+        json="$("${NIX_BIN}" store ping --json 2>"${err}" || true)"
+    fi
+    if [ -z "${json}" ]; then
+        store_msg="$(cat "${err}" 2>/dev/null || true)"
+        rm -f "${err}"
+        if [ "${NIX_STORE_RETRY:-}" != "1" ]; then
+            export NIX_STORE_RETRY=1
+            if nix_revive_store "${store_msg}"; then
+                nix_check_existing || return 1
+                return 0
+            fi
+        fi
+        if [ "${NIX_REPAIR:-}" != "1" ]; then
+            info "The existing Nix store is unusable. Installing Nix ${NIX_PIN_VERSION}."
+            nix_replace_and_recheck || return 1
+            return 0
+        fi
+        nix_store_error "${store_msg}"
+        return 1
+    fi
+    rm -f "${err}"
+
+    url="$(printf '%s' "${json}" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+    sver="$(printf '%s' "${json}" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+    if [[ "${sver}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+        smaj="${BASH_REMATCH[1]}"
+        smin="${BASH_REMATCH[2]}"
+        if [ "${smaj}" != "${maj}" ] || [ "${smin}" != "${min}" ]; then
+            if [ "${NIX_REPAIR:-}" = "1" ]; then
+                error "Nix client ${maj}.${min}.${pat} still does not match the store (${sver})."
+                return 1
+            fi
+            info "Nix client ${maj}.${min}.${pat} does not match the store (${sver}). Replacing Nix."
+            nix_replace_and_recheck || return 1
+            return 0
+        fi
+    fi
+
+    if [ -S /nix/var/nix/daemon-socket/socket ] && [[ "${url}" != daemon* ]]; then
+        warn "A Nix daemon socket exists, but ${NIX_BIN} is using a local store."
+        warn "A single-user Nix and a multi-user Nix are both installed."
+    fi
+
+    if [[ "${url}" == daemon* ]] && ! grep -q '^nixbld1:' /etc/passwd 2>/dev/null; then
+        if [ "${NIX_REPAIR:-}" = "1" ]; then
+            error "The Nix daemon still has no nixbld build users."
+            return 1
+        fi
+        info "The Nix daemon has no nixbld build users. Replacing Nix."
+        nix_replace_and_recheck || return 1
+        return 0
+    fi
+
+    if ! "${NIX_BIN}" flake --help >/dev/null 2>&1; then
+        if [ "${NIX_REPAIR:-}" = "1" ]; then
+            error "Nix ${maj}.${min}.${pat} still cannot run flakes."
+            return 1
+        fi
+        info "Nix ${maj}.${min}.${pat} cannot run flakes. Replacing it."
+        nix_replace_and_recheck || return 1
+        return 0
+    fi
+
+    sys="$("${NIX_BIN}" config show system 2>/dev/null || true)"
+    expected="$(nix_expected_system 2>/dev/null || true)"
+    if [ -n "${sys}" ] && [ -n "${expected}" ] && [ "${sys}" != "${expected}" ]; then
+        error "Nix is configured for system ${sys}. This machine is ${expected}."
+        error "Fix the system setting in /etc/nix/nix.conf or ~/.config/nix/nix.conf."
+        return 1
+    fi
+
+    if [ "$("${NIX_BIN}" config show restrict-eval 2>/dev/null || true)" = "true" ]; then
+        error "Nix restrict-eval is enabled, so this flake cannot fetch NixOS 25.05."
+        error "Set restrict-eval = false in the Nix configuration and retry."
+        return 1
+    fi
+
+    feats="$("${NIX_BIN}" config show experimental-features 2>/dev/null || true)"
+    if ! printf '%s' "${feats}" | grep -q 'flakes' \
+        || ! printf '%s' "${feats}" | grep -q 'nix-command'; then
+        warn "nix.conf does not list flakes. This run enables them with NIX_CONFIG."
+    fi
+
+    info "Nix ${maj}.${min}.${pat} (pinned for NixOS 25.05)"
+    return 0
+}
+
+ensure_nix() {
+    source_nix_profile || true
+    enable_flakes
+    if nix_present || host_nix_select_bin >/dev/null 2>&1; then
+        nix_check_existing || exit 1
+        return 0
+    fi
+    step "Nix not found — installing Nix ${NIX_PIN_VERSION} (no OS package manager) ..."
+    nix_install_pinned || exit 1
+    nix_check_existing || exit 1
 }
 
 ensure_flakes() {
     enable_flakes
-    if ! nix flake --help >/dev/null 2>&1; then
+    if ! "${NIX_BIN:-nix}" flake --help >/dev/null 2>&1; then
         error "This Nix build does not support flakes. Upgrade Nix, then re-run."
         exit 1
     fi
 }
 
 ensure_flake_lock() {
+    local meta_err
     if [ ! -f "${FLAKE_DIR}/flake.nix" ]; then
         error "flake.nix missing in ${FLAKE_DIR}"
         exit 1
     fi
-    restore_cached_flake_lock
+    if [ ! -f "${FLAKE_DIR}/flake.lock" ] && [ -f "${SYSTEM_LOCK}" ]; then
+        restore_cached_flake_lock
+    fi
     mkdir -p "${SYSTEM_CACHE}"
     stage_flake
     if [ ! -f "${SYSTEM_FLAKE}/flake.lock" ]; then
         step "Creating flake.lock (nixpkgs 25.05) ..."
         nix_cmd flake lock "$(flake_ref)"
         cp -f "${SYSTEM_FLAKE}/flake.lock" "${FLAKE_DIR}/flake.lock"
+    else
+        # Nix 2.35 rejects a lock written by an older Nix when --no-update-lock-file
+        # is set. Probe before the dev-shell download so that case updates the lock.
+        meta_err="${SYSTEM_CACHE}/lock.err"
+        if ! nix_cmd flake metadata "$(flake_ref)" --no-update-lock-file --json \
+            >/dev/null 2>"${meta_err}"; then
+            if flake_lock_rejected "${meta_err}"; then
+                refresh_flake_lock
+            else
+                cat "${meta_err}" >&2
+                exit 1
+            fi
+        fi
+        rm -f "${meta_err}"
     fi
     cp -f "${FLAKE_DIR}/flake.lock" "${SYSTEM_LOCK}"
     cp -f "${FLAKE_DIR}/flake.lock" "${SYSTEM_FLAKE}/flake.lock"
@@ -524,46 +1170,102 @@ check_host_os() {
         Linux|Darwin) ;;
         *)
             error "Unsupported OS: $(uname -s). Use Linux, macOS, or WSL. On native Windows use run.cmd."
-            exit 1
+            return 1
             ;;
     esac
 }
 
 realize_nix_shell() {
+    local develop_err
     mkdir -p "${SYSTEM_CACHE}"
     stage_flake
+    develop_err="${SYSTEM_CACHE}/develop.err"
+    # The installer text says to open a new terminal. This process already
+    # loaded the Nix profile, so the fetch continues here.
+    source_nix_profile || true
+    enable_flakes
+    info "Nix is loaded in this terminal. No new shell is required."
     step "Fetching Nix packages into the system cache (once per machine / flake) ..."
-    local develop_err="${SYSTEM_CACHE}/develop.err"
-    if ! nix_cmd develop "$(flake_ref)" \
-        --profile "${SYSTEM_PROFILE}" \
-        --no-update-lock-file \
-        --command true 2>"${develop_err}"; then
-        if grep -qE 'unlocked input|lock file contains|does not match' "${develop_err}" 2>/dev/null; then
-            warn "flake.lock out of date — refreshing and retrying ..."
-            nix_cmd flake lock "$(flake_ref)"
-            cp -f "${SYSTEM_FLAKE}/flake.lock" "${SYSTEM_LOCK}"
-            cp -f "${SYSTEM_FLAKE}/flake.lock" "${FLAKE_DIR}/flake.lock"
+    info "This download can take a while. A status line is printed every 20 seconds until it finishes."
+
+    # Show Nix output as it happens, and keep a copy for the lock-file check.
+    # A heartbeat keeps the terminal from looking frozen when Nix is quiet.
+    nix_run_visible() {
+        local log="$1"
+        shift
+        local beat=0 st=0
+        : > "${log}"
+        (
+            # $$ is the run.sh shell. Stop if that shell has already exited.
+            parent_pid="$$"
+            while kill -0 "${parent_pid}" 2>/dev/null; do
+                sleep 20
+                kill -0 "${parent_pid}" 2>/dev/null || exit 0
+                info "Still fetching Nix packages ($(date -u +%H:%M:%S)). Leave this terminal open."
+            done
+        ) &
+        beat=$!
+        set +e
+        "$@" 2>&1 | tee -a "${log}"
+        st=$?
+        set -e
+        kill "${beat}" 2>/dev/null || true
+        wait "${beat}" 2>/dev/null || true
+        return "${st}"
+    }
+    nix_develop_locked() {
+        nix_run_visible "${develop_err}" \
             nix_cmd develop "$(flake_ref)" \
-                --profile "${SYSTEM_PROFILE}" \
-                --no-update-lock-file \
-                --command true
+            --profile "${SYSTEM_PROFILE}" \
+            --print-build-logs \
+            --no-update-lock-file \
+            --command true
+    }
+    if ! nix_develop_locked; then
+        if flake_lock_rejected "${develop_err}"; then
+            refresh_flake_lock
+            if ! nix_develop_locked; then
+                if flake_lock_rejected "${develop_err}"; then
+                    warn "Nix still wants to write flake.lock. Allowing that for this fetch."
+                    nix_run_visible "${develop_err}" \
+                        nix_cmd develop "$(flake_ref)" \
+                        --profile "${SYSTEM_PROFILE}" \
+                        --print-build-logs \
+                        --command true \
+                        || { cat "${develop_err}" >&2; exit 1; }
+                    cp -f "${SYSTEM_FLAKE}/flake.lock" "${SYSTEM_LOCK}"
+                    cp -f "${SYSTEM_FLAKE}/flake.lock" "${FLAKE_DIR}/flake.lock"
+                else
+                    cat "${develop_err}" >&2
+                    exit 1
+                fi
+            fi
         else
             cat "${develop_err}" >&2
             exit 1
         fi
     fi
-    if [ -f "${SYSTEM_FLAKE}/flake.lock" ]; then
-        cp -f "${SYSTEM_FLAKE}/flake.lock" "${SYSTEM_LOCK}"
-        cp -f "${SYSTEM_FLAKE}/flake.lock" "${FLAKE_DIR}/flake.lock"
+    if ! nix_cmd print-dev-env "$(flake_ref)" --offline --no-update-lock-file \
+        2>"${develop_err}" | tr -d '\r' > "${SYSTEM_DEVENV}.tmp"; then
+        if flake_lock_rejected "${develop_err}"; then
+            warn "Nix still wants to write flake.lock. Saving the dev environment anyway."
+            nix_cmd print-dev-env "$(flake_ref)" --offline \
+                2>"${develop_err}" | tr -d '\r' > "${SYSTEM_DEVENV}.tmp" \
+                || rm -f "${SYSTEM_DEVENV}.tmp"
+        else
+            rm -f "${SYSTEM_DEVENV}.tmp"
+        fi
     fi
-
-    if nix_cmd print-dev-env "$(flake_ref)" --offline --no-update-lock-file \
-        | tr -d '\r' > "${SYSTEM_DEVENV}.tmp"; then
+    if [ -s "${SYSTEM_DEVENV}.tmp" ]; then
         mv -f "${SYSTEM_DEVENV}.tmp" "${SYSTEM_DEVENV}"
         sanitize_shell_file "${SYSTEM_DEVENV}"
     else
         rm -f "${SYSTEM_DEVENV}.tmp"
         warn "nix print-dev-env failed — later runs will use nix develop --offline"
+    fi
+    if [ -f "${SYSTEM_FLAKE}/flake.lock" ]; then
+        cp -f "${SYSTEM_FLAKE}/flake.lock" "${SYSTEM_LOCK}"
+        cp -f "${SYSTEM_FLAKE}/flake.lock" "${FLAKE_DIR}/flake.lock"
     fi
     date -u +"%Y-%m-%dT%H:%M:%SZ" > "${SYSTEM_READY}"
     date -u +"%Y-%m-%dT%H:%M:%SZ" > "${READY_MARKER}"
@@ -572,12 +1274,34 @@ realize_nix_shell() {
 
 setup_first_time() {
     step "First-time (or incomplete) setup — preparing Typst Nix environment ..."
-    ensure_curl
+    ensure_bootstrap_tools
     ensure_nix
     ensure_flakes
     ensure_flake_lock
     check_host_os
     realize_nix_shell
+}
+
+sanitize_ld_library_path() {
+    local in="${LD_LIBRARY_PATH:-}" out="" p oldifs
+    oldifs="${IFS}"
+    IFS=':'
+    set -f
+    for p in ${in}; do
+        case "${p}" in
+            *glibc*|*ld-linux*|"") continue ;;
+        esac
+        if [ -z "${out}" ]; then out="${p}"; else out="${out}:${p}"; fi
+    done
+    set +f
+    IFS="${oldifs}"
+    export LD_LIBRARY_PATH="${out}"
+}
+
+export_runtime_env() {
+    export LOGIC_DOC_ROOT="${SCRIPT_DIR}"
+    mkdir -p "${SCRIPT_DIR}/output"
+    sanitize_ld_library_path
 }
 
 compile_pdf() {
@@ -609,11 +1333,21 @@ compile_pdf() {
 
 launch_app() {
     prefer_unix_path
-    cd "${SCRIPT_DIR}"
-    export LOGIC_DOC_ROOT="${SCRIPT_DIR}"
+    export_runtime_env
+    # Nix may have filled the store since the outer check.
+    host_check_free_space true || exit 1
 
     if [ "${PREP_ONLY}" = true ]; then
-        info "Prep-only — Nix env ready (typst: $(typst --version 2>/dev/null || echo missing))."
+        if ! command -v typst >/dev/null 2>&1; then
+            error "typst missing from Nix environment."
+            exit 1
+        fi
+        if [ -z "${TYPST_FONT_PATHS:-}" ]; then
+            error "TYPST_FONT_PATHS is empty — parastoo-fonts did not load from the Nix shell."
+            exit 1
+        fi
+        info "Prep-only — Nix env ready (typst: $(typst --version))."
+        info "Fonts: ${TYPST_FONT_PATHS}"
         return 0
     fi
 
@@ -622,16 +1356,13 @@ launch_app() {
 
 run_inside_nix() {
     step "Nix environment ready — compiling document ..."
-    local launch_pid=0
-
+    local launch_pid=0 st=0
     forward_launch_signal() {
         if [ "${launch_pid}" -gt 0 ] 2>/dev/null && kill -0 "${launch_pid}" 2>/dev/null; then
             kill -INT "${launch_pid}" 2>/dev/null || kill -TERM "${launch_pid}" 2>/dev/null || true
         fi
     }
-
     trap forward_launch_signal INT TERM
-
     if [ -f "${SYSTEM_DEVENV}" ]; then
         info "Using Nix env already fetched on this system (no download)"
         sanitize_shell_file "${SYSTEM_DEVENV}"
@@ -645,18 +1376,31 @@ run_inside_nix() {
         launch_pid=$!
     else
         stage_flake
+        # No --no-update-lock-file here. This path is only the fallback when
+        # devenv.sh could not be saved, and Nix may still need to touch the lock.
         nix_cmd develop "$(flake_ref)" \
             --profile "${SYSTEM_PROFILE}" \
             --offline \
-            --no-update-lock-file \
             --command bash "${SCRIPT_DIR}/run.sh" --__launch "$@" &
         launch_pid=$!
     fi
-
+    if [ -z "${launch_pid}" ]; then
+        error "Could not start the Nix environment."
+        trap - INT TERM
+        return 1
+    fi
     while kill -0 "${launch_pid}" 2>/dev/null; do
-        wait "${launch_pid}" 2>/dev/null || true
+        set +e
+        wait "${launch_pid}"
+        st=$?
+        set -e
     done
     trap - INT TERM
+    if [ -f "${SYSTEM_FLAKE}/flake.lock" ]; then
+        cp -f "${SYSTEM_FLAKE}/flake.lock" "${SYSTEM_LOCK}" 2>/dev/null || true
+        cp -f "${SYSTEM_FLAKE}/flake.lock" "${FLAKE_DIR}/flake.lock" 2>/dev/null || true
+    fi
+    return "${st}"
 }
 
 main() {
@@ -665,7 +1409,21 @@ main() {
         exit 0
     fi
 
+    RUN_SH_ARGS=("$@")
+    host_rerun_as_desktop_user "${SCRIPT_DIR}/run.sh" "$@" || exit 1
+    check_host_os || exit 1
     init_system_cache_paths
+    export_runtime_env
+    ensure_bootstrap_tools
+    host_prepare_git "${SCRIPT_DIR}" true || exit 1
+    # --force-setup deletes the Nix marker; budget the download before that work.
+    if [ "${FORCE_SETUP}" = true ]; then
+        invalidate_system_nix_cache
+    fi
+    host_check_free_space || exit 1
+    # Also when the dev env is already cached: an older or mismatched Nix
+    # must be replaced before nix develop.
+    ensure_nix
 
     if [ "${FORCE_SETUP}" = true ]; then
         invalidate_system_nix_cache
@@ -686,7 +1444,7 @@ main() {
         exit 0
     fi
 
-    run_inside_nix "$@"
+    run_inside_nix
 }
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then

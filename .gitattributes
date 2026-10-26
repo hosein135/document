@@ -1,0 +1,8 @@
+# Keep the Nix/Typst bootstrap runnable on Linux and WSL.
+*.sh text eol=lf
+*.nix text eol=lf
+*.py text eol=lf
+*.typ text eol=lf
+*.lock text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
